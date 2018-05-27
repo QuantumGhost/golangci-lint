@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/sirupsen/logrus"
 )
 
 var printfuncs = flag.String("printfuncs", "", "comma-separated list of print function names to check")
@@ -125,40 +127,52 @@ var isPrint = map[string]bool{
 // If it cannot find any format string parameter, it returns ("", -1).
 func formatString(f *File, call *ast.CallExpr) (format string, idx int) {
 	typ := f.pkg.types[call.Fun].Type
+	logrus.Warnf("govet debug: call type is %+v", typ)
 	if typ != nil {
 		if sig, ok := typ.(*types.Signature); ok {
+			logrus.Warnf("govet debug: call is signature: %+v", sig)
 			if !sig.Variadic() {
+				logrus.Warnf("govet debug: signature isn't variadic")
 				// Skip checking non-variadic functions.
 				return "", -1
 			}
 			idx := sig.Params().Len() - 2
 			if idx < 0 {
+				logrus.Warnf("govet debug: too few args: %d", sig.Params().Len())
 				// Skip checking variadic functions without
 				// fixed arguments.
 				return "", -1
 			}
 			s, ok := stringConstantArg(f, call, idx)
 			if !ok {
+				logrus.Warnf("govet debug: format arg isn't string: %+v", s)
 				// The last argument before variadic args isn't a string.
 				return "", -1
 			}
+
+			logrus.Warnf("govet debug: const string format: %q, %d", s, idx)
 			return s, idx
 		}
 	}
 
+	logrus.Warnf("govet debug: fall back to scanning for the first string constant in the call")
 	// Cannot determine call's signature. Fall back to scanning for the first
 	// string constant in the call.
 	for idx := range call.Args {
 		if s, ok := stringConstantArg(f, call, idx); ok {
+			logrus.Warnf("govet debug: call %+v arg #%d is string constant", call, idx)
 			return s, idx
 		}
 		if f.pkg.types[call.Args[idx]].Type == types.Typ[types.String] {
 			// Skip checking a call with a non-constant format
 			// string argument, since its contents are unavailable
 			// for validation.
+			logrus.Warnf("govet debug: non-const arg: %+v, %+v", f.pkg.types[call.Args[idx]].Type, types.Typ[types.String])
 			return "", -1
 		}
 	}
+
+	logrus.Warnf("govet debug: finished, no string constant")
 	return "", -1
 }
 
@@ -168,13 +182,18 @@ func formatString(f *File, call *ast.CallExpr) (format string, idx int) {
 // constant.
 func stringConstantArg(f *File, call *ast.CallExpr, idx int) (string, bool) {
 	if idx >= len(call.Args) {
+		logrus.Warnf("govet debug: too few args: %d, %+v", idx, call.Args)
 		return "", false
 	}
 	arg := call.Args[idx]
 	lit := f.pkg.types[arg].Value
 	if lit != nil && lit.Kind() == constant.String {
+		logrus.Warnf("govet debug: format is constant string: %+v, %+v, %q, %+v",
+			arg, lit, lit.Kind(), f.pkg.types)
 		return constant.StringVal(lit), true
 	}
+
+	logrus.Warnf("govet debug: format isn't constant string: %+v, %+v", arg, lit)
 	return "", false
 }
 
@@ -309,6 +328,8 @@ func (f *File) checkPrintf(call *ast.CallExpr, name string) {
 		}
 		return
 	}
+
+	logrus.Warnf("govet debug: formatString(%+v) = %q, %d", call, format, idx)
 
 	firstArg := idx + 1 // Arguments are immediately after format string.
 	if !strings.Contains(format, "%") {
